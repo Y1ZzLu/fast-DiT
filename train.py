@@ -148,17 +148,28 @@ def main(args):
         input_size=latent_size,
         num_classes=args.num_classes
     )
+
+    # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    ema = deepcopy(model)
+    # Load pre-trained model weights
+    if args.ckpt_path is not None:
+        checkpoint = torch.load(args.ckpt_path, map_location='cpu')
+        model.load_state_dict(checkpoint["model"])
+        ema.load_state_dict(checkpoint["ema"])
+        opt.load_state_dict(checkpoint["opt"])
+        del checkpoint
+        if accelerator.is_main_process:
+            logger.info(f"Loaded pre-trained model from {args.ckpt_path}")
+        
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
-    ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
+    ema = ema.to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     if accelerator.is_main_process:
         logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
-
-    # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
     # Setup data:
     features_dir = f"{args.feature_path}/imagenet256_features"
@@ -252,13 +263,14 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=1000)
+    parser.add_argument("--num-classes", type=int, default=4)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--log-every", type=int, default=100)
-    parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--log-every", type=int, default=1000)
+    parser.add_argument("--ckpt-every", type=int, default=4_000)
+    parser.add_argument("--ckpt-path", type=str, default=None, help="Path to the pre-trained model checkpoint")
     args = parser.parse_args()
     main(args)
